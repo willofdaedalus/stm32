@@ -1,5 +1,5 @@
 # path to your global libopencm3 install
-OPENCM3_DIR = ~/dev/libopencm3
+OPENCM3_DIR = $(HOME)/dev/libopencm3
 
 # target MCU family
 DEVICE = stm32f4
@@ -23,10 +23,12 @@ OBJ = $(addprefix $(BUILD_DIR)/, $(notdir $(SRC:.c=.o)))
 
 CFLAGS = -O2 -g -Wall -Wextra -std=gnu99
 CFLAGS += -I$(INC_DIR) -I$(OPENCM3_DIR)/include
-CFLAGS += -mthumb -mcpu=cortex-m4 -mfloat-abi=soft
+CFLAGS += -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
+CFLAGS += -DSTM32F4
 
 LDFLAGS = -L$(OPENCM3_DIR)/lib -lopencm3_$(DEVICE)
 LDFLAGS += -Tlinker.ld -nostartfiles
+LDFLAGS += -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 # default target
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin size
