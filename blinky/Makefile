@@ -1,64 +1,112 @@
-# path to your global libopencm3 install
-OPENCM3_DIR = $(HOME)/dev/libopencm3
-
-# target MCU family
-DEVICE = stm32f4
-CHIP = stm32f411re  # example, adjust to your board
-
-# compiler setup
-PREFIX = arm-none-eabi
-CC = $(PREFIX)-gcc
-LD = $(PREFIX)-gcc
-OBJCOPY = $(PREFIX)-objcopy
-SIZE = $(PREFIX)-size
-
-# project setup
-TARGET = main
+TARGET = firmware
+DEBUG = 1
+OPT = -Og
+# Build path
 BUILD_DIR = build
-SRC_DIR = src
-INC_DIR = include
 
-SRC = $(wildcard $(SRC_DIR)/*.c)
-OBJ = $(addprefix $(BUILD_DIR)/, $(notdir $(SRC:.c=.o)))
+# C sources
+C_SOURCES = $(shell find . -name '*.c' -not -path './cmsis/*' -not -path './build/*' -not -path './startup/*')
+C_SOURCES += cmsis/device/system_stm32f4xx.c
+# ASM sources
+ASM_SOURCES = startup/startup_stm32f411xe.s
 
-CFLAGS = -O2 -g -Wall -Wextra -std=gnu99
-CFLAGS += -I$(INC_DIR) -I$(OPENCM3_DIR)/include
-CFLAGS += -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
-CFLAGS += -DSTM32F4
+# Binaries
+PREFIX = arm-none-eabi-
+CC = $(PREFIX)gcc
+AS = $(PREFIX)gcc -x assembler-with-cpp
+CP = $(PREFIX)objcopy
+SZ = $(PREFIX)size
+HEX = $(CP) -O ihex
+BIN = $(CP) -O binary -S
 
-LDFLAGS = -L$(OPENCM3_DIR)/lib -lopencm3_$(DEVICE)
-LDFLAGS += -Tlinker.ld -nostartfiles
-LDFLAGS += -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
+# CFLAGS
+# cpu
+CPU = -mcpu=cortex-m4
+# fpu
+FPU = -mfpu=fpv4-sp-d16
+# float-abi
+FLOAT-ABI = -mfloat-abi=hard
+# mcu
+MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
+# macros for gcc
+# AS defines
+AS_DEFS =
+# C defines
+C_DEFS = \
+-DSTM32F411xE
+# AS includes
+AS_INCLUDES =
+# C includes
+C_INCLUDES = \
+-Icmsis/core \
+-Icmsis/device \
+-Iinclude
+# compile gcc flags
+ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 
-# default target
-all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin size
+CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 
-# ensure build directory exists
+ifeq ($(DEBUG), 1)
+CFLAGS += -g -gdwarf-2
+endif
+# Generate dependency information
+CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
+
+# LDFLAGS
+# link script
+LDSCRIPT = startup/STM32F411RETx_FLASH.ld
+# libraries
+LIBS = -lc -lm -lnosys
+LIBDIR =
+LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections
+# default action: build all
+all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
+
+# Build the application
+# list of objects
+OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)))
+# list of ASM program objects
+OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.s=.o)))
+vpath %.s $(sort $(dir $(ASM_SOURCES)))
+
+$(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR)
+	@echo "CC $<"
+	@$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/$(notdir $(<:.c=.lst)) $< -o $@
+
+$(BUILD_DIR)/%.o: %.s Makefile | $(BUILD_DIR)
+	@echo "AS $<"
+	@$(AS) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) Makefile
+	@echo "LD $@"
+	@$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	@echo ""
+	@$(SZ) $@
+	@echo ""
+
+$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
+	@echo "HEX $@"
+	@$(HEX) $< $@
+
+$(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
+	@echo "BIN $@"
+	@$(BIN) $< $@
+
 $(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+	mkdir $@
 
-# compile object files into build directory
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# link all objects into final ELF
-$(BUILD_DIR)/$(TARGET).elf: $(OBJ)
-	$(LD) $(OBJ) $(LDFLAGS) -o $@
-
-# convert ELF to BIN
-$(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
-	$(OBJCOPY) -O binary $< $@
-
-# show binary size
-size: $(BUILD_DIR)/$(TARGET).elf
-	$(SIZE) $<
-
-# flash target using st-flash
-flash: $(BUILD_DIR)/$(TARGET).bin
-	st-flash write $< 0x08000000
-
-# clean everything
 clean:
-	rm -rf $(BUILD_DIR)
+	-rm -fR $(BUILD_DIR)
 
-.PHONY: all clean flash size
+flash: $(BUILD_DIR)/$(TARGET).bin
+	st-flash write $< 0x8000000
+
+# Generate compile_commands.json
+bear:
+	bear -- make -B
+
+# Dependencies
+-include $(wildcard $(BUILD_DIR)/*.d)
+
+.PHONY: all clean flash bear
