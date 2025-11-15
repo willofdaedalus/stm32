@@ -1,112 +1,83 @@
 TARGET = firmware
-DEBUG = 1
-OPT = -Og
-# Build path
 BUILD_DIR = build
 
-# C sources
-C_SOURCES = $(shell find . -name '*.c' -not -path './cmsis/*' -not -path './build/*' -not -path './startup/*')
-C_SOURCES += cmsis/device/system_stm32f4xx.c
-# ASM sources
-ASM_SOURCES = startup/startup_stm32f411xe.s
+CORE      := ../core
+CMSIS     := $(CORE)/cmsis
+STARTUP   := $(CORE)/startup
+DEVICE    := $(CMSIS)/device
 
-# Binaries
+# Required files
+SYSTEM_SRC   := $(DEVICE)/system_stm32f4xx.c
+STARTUP_SRC  := $(STARTUP)/startup_stm32f411xe.s
+LDSCRIPT     := $(STARTUP)/STM32F411RETx_FLASH.ld
+
+# Project C files
+PROJECT_SRC = $(shell find . -name '*.c')
+
+# Add system + startup
+SRC = $(PROJECT_SRC) $(SYSTEM_SRC)
+ASM = $(STARTUP_SRC)
+
 PREFIX = arm-none-eabi-
-CC = $(PREFIX)gcc
-AS = $(PREFIX)gcc -x assembler-with-cpp
-CP = $(PREFIX)objcopy
-SZ = $(PREFIX)size
+CC  = $(PREFIX)gcc
+AS  = $(PREFIX)gcc -x assembler-with-cpp
+CP  = $(PREFIX)objcopy
+SZ  = $(PREFIX)size
 HEX = $(CP) -O ihex
 BIN = $(CP) -O binary -S
 
-# CFLAGS
-# cpu
-CPU = -mcpu=cortex-m4
-# fpu
-FPU = -mfpu=fpv4-sp-d16
-# float-abi
-FLOAT-ABI = -mfloat-abi=hard
-# mcu
-MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
-# macros for gcc
-# AS defines
-AS_DEFS =
-# C defines
-C_DEFS = \
--DSTM32F411xE
-# AS includes
-AS_INCLUDES =
-# C includes
-C_INCLUDES = \
--Icmsis/core \
--Icmsis/device \
--Iinclude
-# compile gcc flags
-ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
+MCU = -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=soft
 
-CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
+CFLAGS = $(MCU) -Wall -O0 -g \
+    -DSTM32F411xE \
+    -fdata-sections -ffunction-sections \
+    -I$(CMSIS)/core \
+    -I$(DEVICE) \
+    -Iinclude
 
-ifeq ($(DEBUG), 1)
-CFLAGS += -g -gdwarf-2
-endif
-# Generate dependency information
-CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
+ASFLAGS = $(MCU) -g -Wall
 
-# LDFLAGS
-# link script
-LDSCRIPT = startup/STM32F411RETx_FLASH.ld
-# libraries
-LIBS = -lc -lm -lnosys
-LIBDIR =
-LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections
-# default action: build all
+LDFLAGS = $(MCU) -T$(LDSCRIPT) \
+    -specs=nosys.specs -specs=nano.specs \
+    -Wl,--gc-sections \
+    -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
+
+OBJ = $(addprefix $(BUILD_DIR)/,$(notdir $(SRC:.c=.o)))
+OBJ += $(BUILD_DIR)/startup.o
+
+vpath %.c $(sort $(dir $(SRC)))
+vpath %.s $(sort $(dir $(ASM)))
+
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
-
-# Build the application
-# list of objects
-OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
-vpath %.c $(sort $(dir $(C_SOURCES)))
-# list of ASM program objects
-OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.s=.o)))
-vpath %.s $(sort $(dir $(ASM_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR)
 	@echo "CC $<"
-	@$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/$(notdir $(<:.c=.lst)) $< -o $@
+	@$(CC) -c $(CFLAGS) $< -o $@ -MMD -MP -MF"$(@:%.o=%.d)"
 
-$(BUILD_DIR)/%.o: %.s Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/startup.o: $(STARTUP_SRC)
 	@echo "AS $<"
-	@$(AS) -c $(CFLAGS) $< -o $@
+	@$(AS) -c $(ASFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) Makefile
+$(BUILD_DIR)/$(TARGET).elf: $(OBJ)
 	@echo "LD $@"
-	@$(CC) $(OBJECTS) $(LDFLAGS) -o $@
-	@echo ""
+	@$(CC) $(OBJ) $(LDFLAGS) -o $@
 	@$(SZ) $@
-	@echo ""
 
-$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
-	@echo "HEX $@"
+$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.elf
 	@$(HEX) $< $@
 
-$(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
-	@echo "BIN $@"
+$(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf
 	@$(BIN) $< $@
 
 $(BUILD_DIR):
-	mkdir $@
+	mkdir -p $@
 
 clean:
-	-rm -fR $(BUILD_DIR)
+	rm -rf $(BUILD_DIR)
 
 flash: $(BUILD_DIR)/$(TARGET).bin
 	st-flash write $< 0x8000000
 
-# Generate compile_commands.json
-bear:
-	bear -- make -B
-
-# Dependencies
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-.PHONY: all clean flash bear
+.PHONY: all clean flash

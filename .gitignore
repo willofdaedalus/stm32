@@ -1,5 +1,7 @@
-*.o
-*.hex
-*.elf
-*.bin
-.cache/*
+*/.cache/*
+*/build/*
+*/*.json
+*/*.o
+*/*.elf
+*/*.hex
+*/*.bin
